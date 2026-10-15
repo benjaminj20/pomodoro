@@ -73,6 +73,18 @@ enum FloatingSize: String, CaseIterable, Identifiable {
     }
 }
 
+extension UserDefaults {
+    /// Where the app keeps settings. `make snapshots` gets its own throwaway
+    /// store so it can never overwrite your real task or preferences.
+    nonisolated(unsafe) static let app: UserDefaults = {
+        guard ProcessInfo.processInfo.environment["POMODORO_SNAPSHOT_DIR"] != nil else { return .standard }
+        let suite = "com.benjaminjacob.pomodoro.snapshots"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }()
+}
+
 /// User settings, persisted to UserDefaults on every change.
 @MainActor
 final class Preferences: ObservableObject {
@@ -80,7 +92,7 @@ final class Preferences: ObservableObject {
     static let maxPresets = 8
     static let sliderRanges = [60, 90, 120, 180, 240]
 
-    private let defaults = UserDefaults.standard
+    private let defaults = UserDefaults.app
 
     // Timer
     @Published var presets: [Int] {
@@ -102,6 +114,7 @@ final class Preferences: ObservableObject {
     @Published var menuBarStyle: MenuBarStyle { didSet { defaults.set(menuBarStyle.rawValue, forKey: Key.menuBarStyle) } }
     @Published var menuBarFormat: MenuBarTimeFormat { didSet { defaults.set(menuBarFormat.rawValue, forKey: Key.menuBarFormat) } }
     @Published var iconWhenIdle: Bool { didSet { defaults.set(iconWhenIdle, forKey: Key.iconWhenIdle) } }
+    @Published var timesheetMenuBarIcon: Bool { didSet { defaults.set(timesheetMenuBarIcon, forKey: Key.timesheetMenuBarIcon) } }
 
     // Floating timer
     @Published var floatingOnStart: Bool { didSet { defaults.set(floatingOnStart, forKey: Key.floatingOnStart) } }
@@ -115,13 +128,28 @@ final class Preferences: ObservableObject {
     @Published var menuBarShowsTask: Bool { didSet { defaults.set(menuBarShowsTask, forKey: Key.menuBarShowsTask) } }
     @Published var pauseCountUpOnSleep: Bool { didSet { defaults.set(pauseCountUpOnSleep, forKey: Key.pauseCountUpOnSleep) } }
 
+    // Global hotkeys
+    @Published var hotkeysEnabled: Bool { didSet { defaults.set(hotkeysEnabled, forKey: Key.hotkeysEnabled) } }
+    /// Every action is present; nil means "no shortcut".
+    @Published var hotkeys: [HotkeyAction: Hotkey?] {
+        didSet {
+            let stored = Dictionary(uniqueKeysWithValues: hotkeys.map { ($0.key.rawValue, $0.value) })
+            defaults.set(try? JSONEncoder().encode(stored), forKey: Key.hotkeys)
+        }
+    }
+
+    /// The shortcuts that are actually set.
+    var activeHotkeys: [HotkeyAction: Hotkey] {
+        hotkeys.compactMapValues { $0 }
+    }
+
     // Completion
     /// Empty string means no sound.
     @Published var soundName: String { didSet { defaults.set(soundName, forKey: Key.soundName) } }
     @Published var showNotification: Bool { didSet { defaults.set(showNotification, forKey: Key.showNotification) } }
 
     init() {
-        let d = UserDefaults.standard
+        let d = UserDefaults.app
         presets = d.array(forKey: Key.presets) as? [Int] ?? Self.defaultPresets
         lastMinutes = d.object(forKey: Key.lastMinutes) as? Int ?? 30
         sliderMaxMinutes = d.object(forKey: Key.sliderMaxMinutes) as? Int ?? 120
@@ -133,6 +161,7 @@ final class Preferences: ObservableObject {
         menuBarStyle = Self.load(Key.menuBarStyle, .boxed)
         menuBarFormat = Self.load(Key.menuBarFormat, .clock)
         iconWhenIdle = d.object(forKey: Key.iconWhenIdle) as? Bool ?? false
+        timesheetMenuBarIcon = d.object(forKey: Key.timesheetMenuBarIcon) as? Bool ?? true
 
         floatingOnStart = d.object(forKey: Key.floatingOnStart) as? Bool ?? true
         floatingOnFinish = d.object(forKey: Key.floatingOnFinish) as? Bool ?? true
@@ -143,6 +172,13 @@ final class Preferences: ObservableObject {
         floatingShowsTask = d.object(forKey: Key.floatingShowsTask) as? Bool ?? true
         menuBarShowsTask = d.object(forKey: Key.menuBarShowsTask) as? Bool ?? false
         pauseCountUpOnSleep = d.object(forKey: Key.pauseCountUpOnSleep) as? Bool ?? true
+
+        hotkeysEnabled = d.object(forKey: Key.hotkeysEnabled) as? Bool ?? true
+        let storedHotkeys = d.data(forKey: Key.hotkeys)
+            .flatMap { try? JSONDecoder().decode([String: Hotkey?].self, from: $0) } ?? [:]
+        hotkeys = Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.map { action in
+            (action, storedHotkeys[action.rawValue] ?? action.defaultHotkey)
+        })
 
         soundName = d.string(forKey: Key.soundName) ?? "Glass"
         showNotification = d.object(forKey: Key.showNotification) as? Bool ?? true
@@ -160,7 +196,7 @@ final class Preferences: ObservableObject {
     }
 
     private static func load<E: RawRepresentable>(_ key: String, _ fallback: E) -> E where E.RawValue == String {
-        UserDefaults.standard.string(forKey: key).flatMap(E.init(rawValue:)) ?? fallback
+        UserDefaults.app.string(forKey: key).flatMap(E.init(rawValue:)) ?? fallback
     }
 
     private enum Key {
@@ -173,6 +209,7 @@ final class Preferences: ObservableObject {
         static let menuBarStyle = "menuBarStyle"
         static let menuBarFormat = "menuBarFormat"
         static let iconWhenIdle = "iconWhenIdle"
+        static let timesheetMenuBarIcon = "timesheetMenuBarIcon"
         static let floatingOnStart = "floatingOnStart"
         static let floatingOnFinish = "floatingOnFinish"
         static let floatingSize = "floatingSize"
@@ -181,6 +218,8 @@ final class Preferences: ObservableObject {
         static let floatingShowsTask = "floatingShowsTask"
         static let menuBarShowsTask = "menuBarShowsTask"
         static let pauseCountUpOnSleep = "pauseCountUpOnSleep"
+        static let hotkeysEnabled = "hotkeysEnabled"
+        static let hotkeys = "hotkeys"
         static let soundName = "soundName"
         static let showNotification = "showNotification"
     }

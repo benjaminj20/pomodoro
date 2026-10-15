@@ -27,12 +27,27 @@ Other targets: `make debug`, `make icon` (regenerate the app icon),
 | **Menu bar timer** | Shows the time in an outlined box. Dim when idle/paused, bright while running. Click to open the panel, ⌥-click to start/pause, right-click for a quick menu. |
 | **Timer panel** | Type a one-line description of what you're doing, then drag the tick slider (0–120 min by default) or tap a preset. `start` counts down, `count up` runs a stopwatch for tasks of unknown length; `pause` / `resume` / `stop` while running. `…` → save current time as a preset, Timesheet, Settings, Quit. Right-click a preset to remove it. |
 | **Floating timer** | Black pill that floats above all windows and Spaces. Drag to move (position is remembered), double-click to pause/resume, hover → × to close. Pulses when time's up. |
-| **Timesheet** | Every session is logged with its task and real running time (pauses excluded). Week view with totals, a stacked chart by day, a task × day grid, and a day-by-day log you can edit, delete from, or add to. Export a week (or everything) as CSV. Right-click a task to rename or merge it. |
+| **Timesheet** | Every session is logged with its task and real running time (pauses excluded). Opens on today: a timeline of the day (one row per task), that day's log, then the week's chart by day and task × day grid. Edit, delete or add entries; overnight hours are collapsed. Export a week (or everything) as CSV. Right-click a task to rename or merge it. |
 | **Settings** | Edit presets; choose what clicking the menu bar or a preset does; menu bar style/format; floating timer size, opacity, when it appears; completion sound and notification; launch at login. |
 
-Panel keyboard shortcuts: type a task then `return` to start · `space` start or pause ·
-`u` count up · `←`/`→` ∓1 min (`⇧` for 5) · `1`–`8` pick a preset · `delete` stop ·
-`esc` close · `⌘T` timesheet · `⌘,` settings.
+## Keyboard
+
+Everything works without the mouse. Press `?` or `⌘/` anywhere in the app (or click ⌨ in the timesheet) to see every shortcut.
+
+**Global shortcuts** (from any app; change them in Settings → Keyboard):
+`⌃⌥P` timer panel · `⌃⌥S` start/pause · `⌃⌥U` count up · `⌃⌥X` stop & log ·
+`⌃⌥T` timesheet · `⌃⌥F` floating timer.
+
+**Timer panel:** the task field is focused when it opens. Type, then `↩` to
+count down or `⌘↩` to count up. `↑`/`↓` in the field cycle recent tasks, `⇥`
+leaves/returns to it. Outside the field: `space`/`S` start or pause · `U` count
+up · `⌫` stop & log (then type the next task) · `←`/`→` ∓1 min (`⇧` for 5) ·
+`1`–`8` presets · `F` floating timer · `⌘T` timesheet · `⌘,` settings · `esc` close.
+
+**Timesheet:** `←`/`→` day · `⇧←`/`⇧→` or `[`/`]` week · `T` today · `↑`/`↓`
+select an entry · `↩` edit · `⌫` delete (`↩` confirms) · `N` add (fills the gap
+since your last entry) · `R` rename task · `W` log day/week ·
+`⌘E`/`⌘⇧E` export · `esc` close.
 
 ## Your data
 

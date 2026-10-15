@@ -15,6 +15,7 @@ struct PanelView: View {
     var onStart: () -> Void
     var onOpenSettings: () -> Void
     var onOpenTimesheet: () -> Void
+    var onShowShortcuts: () -> Void
 
     @FocusState private var taskFocused: Bool
 
@@ -46,6 +47,7 @@ struct PanelView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                timesheetButton
                 moreMenu
             }
             .padding(.top, 13)
@@ -179,6 +181,18 @@ struct PanelView: View {
         }
     }
 
+    private var timesheetButton: some View {
+        Button(action: onOpenTimesheet) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Timesheet (⌘T) — press ⌘/ for all shortcuts")
+    }
+
     private var moreMenu: some View {
         Menu {
             let current = model.minutes
@@ -186,6 +200,7 @@ struct PanelView: View {
                 .disabled(prefs.presets.contains(current) || prefs.presets.count >= Preferences.maxPresets)
             Divider()
             Button("Timesheet…", action: onOpenTimesheet)
+            Button("Keyboard Shortcuts…", action: onShowShortcuts)
             Button("Settings…", action: onOpenSettings)
             Button("Quit Pomodoro") { NSApp.terminate(nil) }
         } label: {

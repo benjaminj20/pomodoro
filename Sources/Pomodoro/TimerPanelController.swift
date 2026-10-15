@@ -11,6 +11,8 @@ final class KeyablePanel: NSPanel {
 final class TimerPanelController: NSObject, NSWindowDelegate {
     var onOpenSettings: (() -> Void)?
     var onOpenTimesheet: (() -> Void)?
+    var onToggleFloating: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
     var onVisibilityChange: ((Bool) -> Void)?
 
     private let model: TimerModel
@@ -71,6 +73,10 @@ final class TimerPanelController: NSObject, NSWindowDelegate {
             onOpenTimesheet: { [weak self] in
                 self?.close()
                 self?.onOpenTimesheet?()
+            },
+            onShowShortcuts: { [weak self] in
+                self?.close()
+                self?.onShowShortcuts?()
             }
         )
         let hosting = NSHostingView(rootView: view)
@@ -158,28 +164,53 @@ final class TimerPanelController: NSObject, NSWindowDelegate {
         keyMonitor = nil
     }
 
-    /// Space/Return start-pause, U counts up, arrows nudge the time, Esc closes,
-    /// ⌘T opens the timesheet, ⌘, opens settings.
+    /// Everything in the panel works from the keyboard:
+    /// - typing goes to the task field (focused on open); ↩ starts a countdown,
+    ///   ⌘↩ counts up, ↑/↓ cycle recent tasks, ⇥ leaves the field
+    /// - outside the field: space start/pause, U count up, ⌫ stop, ←/→ minutes,
+    ///   1–8 presets, F floating timer, ? shortcuts, ⇥ back to the task field
+    /// - anywhere: ⌘1–8 presets, ⌘T timesheet, ⌘/ shortcuts, ⌘, settings, esc close
     private func handleKey(_ key: KeyPress) -> Bool {
         let flags = key.flags
+        let isEditing = panel.firstResponder is NSTextView
+
         if flags.contains(.command) {
+            if key.keyCode == 36 || key.keyCode == 76 { // ⌘↩
+                startCountUp()
+                return true
+            }
+            if let digit = key.characters.flatMap(Int.init), selectPreset(digit) { return true }
             switch key.characters {
             case ",": close(); onOpenSettings?(); return true
             case "q": NSApp.terminate(nil); return true
             case "w": close(); return true
             case "t": close(); onOpenTimesheet?(); return true
+            case "/": close(); onShowShortcuts?(); return true
+            default: return false // ⌘C/⌘V/⌘A etc. go to the field
+            }
+        }
+
+        if key.keyCode == 53 { // esc
+            close()
+            return true
+        }
+        if key.keyCode == 48 { // tab: in and out of the task field
+            if isEditing { panel.makeFirstResponder(nil) } else { state.focusRequest += 1 }
+            return true
+        }
+
+        // While typing a task, leave keys to the field (it handles ↩ itself),
+        // except ↑/↓ which cycle through recent tasks.
+        if isEditing {
+            switch key.keyCode {
+            case 126: cycleRecentTask(-1); return true
+            case 125: cycleRecentTask(1); return true
             default: return false
             }
         }
-        // While typing a task, leave keys to the text field (it handles Return itself).
-        if panel.firstResponder is NSTextView {
-            if key.keyCode == 53 { close(); return true }
-            return false
-        }
+
         let step = flags.contains(.shift) ? 5 : 1
         switch key.keyCode {
-        case 53: // esc
-            close()
         case 36, 76, 49: // return, enter, space
             let wasIdle = !model.isActive
             model.toggle()
@@ -188,20 +219,51 @@ final class TimerPanelController: NSObject, NSWindowDelegate {
             model.setMinutes(max(1, model.minutes - step))
         case 124, 126: // right, up
             model.setMinutes(min(prefs.sliderMaxMinutes, model.minutes + step))
-        case 51, 117: // delete
+        case 51, 117: // delete: stop and get ready to type the next task
             model.stop()
-        case 32: // u
-            model.startCountUp()
-            didStart()
+            state.focusRequest += 1
         default:
-            // 1–9 pick a preset by position.
-            if let digit = key.characters.flatMap(Int.init), digit >= 1, digit <= prefs.presets.count {
-                model.setMinutes(prefs.presets[digit - 1])
-                return true
+            switch key.characters?.lowercased() {
+            case "u": startCountUp()
+            case "f": onToggleFloating?()
+            case "?": close(); onShowShortcuts?()
+            case "s": // also start/pause, for people who think "s for start"
+                let wasIdle = !model.isActive
+                model.toggle()
+                if wasIdle { didStart() }
+            default:
+                if let digit = key.characters.flatMap(Int.init), selectPreset(digit) { return true }
+                return false
             }
-            return false
         }
         return true
+    }
+
+    private func startCountUp() {
+        panel.makeFirstResponder(nil)
+        model.startCountUp()
+        didStart()
+    }
+
+    private func selectPreset(_ number: Int) -> Bool {
+        guard number >= 1, number <= prefs.presets.count else { return false }
+        model.setMinutes(prefs.presets[number - 1])
+        return true
+    }
+
+    /// ↑ goes back through recent tasks (newest first), ↓ comes forward.
+    private func cycleRecentTask(_ direction: Int) {
+        let recent = log.recentTasks()
+        guard !recent.isEmpty else { return }
+        let current = recent.firstIndex { TimeLog.key($0) == TimeLog.key(log.currentTask) }
+        let next: Int
+        if let current {
+            next = current - direction
+        } else {
+            next = direction < 0 ? 0 : recent.count - 1
+        }
+        guard recent.indices.contains(next) else { return }
+        log.currentTask = recent[next]
     }
 
     /// Sendable snapshot of a key event.

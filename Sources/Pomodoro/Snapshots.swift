@@ -46,20 +46,26 @@ extension Snapshots {
         guard log.sessions.isEmpty else { return }
         let calendar = Calendar.current
         let week = TimesheetReport.week(containing: Date(), calendar: calendar)
-        let plan: [[(String, Int, Int, TimerModel.Mode)]] = [
-            [("Email & Slack", 9, 30, .countUp), ("Q4 planning doc", 10, 90, .countdown), ("1:1 with Sam", 13, 30, .countdown), ("Code review", 14, 75, .countUp)],
-            [("Email & Slack", 9, 25, .countUp), ("Incident response", 10, 150, .countUp), ("Q4 planning doc", 15, 45, .countdown)],
-            [("Q4 planning doc", 9, 120, .countdown), ("Hiring loop", 13, 60, .countdown), ("Code review", 15, 40, .countUp), ("Email & Slack", 17, 20, .countUp)],
-            [("Email & Slack", 9, 30, .countUp), ("Roadmap sync", 11, 45, .countdown), ("Q4 planning doc", 13, 100, .countdown)],
+        let plan: [[(String, Double, Int, TimerModel.Mode)]] = [
+            [("Email & Slack", 9, 30, .countUp), ("Q4 planning doc", 9.5, 90, .countdown), ("Break", 11, 15, .countUp),
+             ("Code review", 11.25, 75, .countUp), ("Break", 12.5, 45, .countUp), ("1:1 with Sam", 13.5, 30, .countdown),
+             ("Code review", 14, 60, .countUp), ("Break", 15, 15, .countUp), ("Q4 planning doc", 15.25, 90, .countdown)],
+            [("Email & Slack", 9, 25, .countUp), ("Incident response", 9.5, 150, .countUp), ("Break", 12, 45, .countUp),
+             ("Incident response", 12.75, 60, .countUp), ("Q4 planning doc", 15, 45, .countdown)],
+            [("Email & Slack", 8.75, 20, .countUp), ("Q4 planning doc", 9.1, 100, .countdown), ("Break", 10.9, 15, .countUp),
+             ("Hiring loop", 11.2, 45, .countdown), ("Email & Slack", 12, 10, .countUp)],
+            [("Gifting prospects", 0.38, 20, .countUp), ("Email & Slack", 9, 30, .countUp), ("Roadmap sync", 11, 45, .countdown),
+             ("Break", 11.75, 20, .countUp), ("Q4 planning doc", 13, 100, .countdown)],
             [("Code review", 10, 60, .countUp), ("Expenses", 14, 15, .countdown), ("Learning: Swift Charts", 15, 45, .countUp)],
         ]
         for (dayOffset, entries) in plan.enumerated() {
             guard let day = calendar.date(byAdding: .day, value: dayOffset, to: week.start), day < Date() else { continue }
             for (task, hour, minutes, mode) in entries {
-                let start = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: day)!
-                guard start < Date() else { continue }
+                let start = calendar.startOfDay(for: day).addingTimeInterval(hour * 3600)
+                let end = start.addingTimeInterval(TimeInterval(minutes * 60))
+                guard end < Date() else { continue }
                 log.insert(Session(task: task, mode: mode, planned: mode == .countdown ? TimeInterval(minutes * 60) : nil,
-                                   completed: mode == .countdown, segments: [Segment(start: start, end: start.addingTimeInterval(TimeInterval(minutes * 60)))]))
+                                   completed: mode == .countdown, segments: [Segment(start: start, end: end)]))
             }
         }
     }
