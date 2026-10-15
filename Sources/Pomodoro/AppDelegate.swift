@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var floating: FloatingTimerController!
     private var settings: SettingsWindowController!
     private var timesheet: TimesheetWindowController!
+    private var timesheetIcon: TimesheetStatusItem?
+    private var shortcuts: ShortcutsWindowController!
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMainMenu()
@@ -26,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         floating = FloatingTimerController(model: model, prefs: prefs, log: log)
         settings = SettingsWindowController(prefs: prefs, log: log)
         timesheet = TimesheetWindowController(log: log)
+        shortcuts = ShortcutsWindowController(prefs: prefs)
+        shortcuts.onCustomize = { [weak self] in self?.openSettings() }
 
         statusItem.onOpenPanel = { [weak self] in
             guard let self else { return }
@@ -37,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         panel.onOpenSettings = { [weak self] in self?.openSettings() }
         panel.onOpenTimesheet = { [weak self] in self?.openTimesheet() }
+        panel.onToggleFloating = { [weak self] in self?.perform(.floating) }
+        panel.onShowShortcuts = { [weak self] in self?.shortcuts.show() }
+        statusItem.onShowShortcuts = { [weak self] in self?.shortcuts.show() }
+        timesheet.onShowShortcuts = { [weak self] in self?.shortcuts.toggle() }
+        settings.onShowShortcuts = { [weak self] in self?.shortcuts.show() }
         settings.onOpenTimesheet = { [weak self] in self?.openTimesheet() }
         panel.onVisibilityChange = { [weak self] visible in self?.statusItem.setHighlighted(visible) }
 
@@ -57,6 +67,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         observeSleepAndLock()
+        quitGracefullyOnSIGTERM()
+
+        HotkeyCenter.shared.setHandler { [weak self] action in self?.perform(action) }
+        prefs.$hotkeysEnabled
+            .combineLatest(prefs.$hotkeys)
+            .sink { enabled, hotkeys in
+                // Snapshot runs sit alongside your real copy; don't steal its shortcuts.
+                let active = enabled && Snapshots.outputDirectory == nil
+                HotkeyCenter.shared.register(active ? hotkeys.compactMapValues { $0 } : [:])
+            }
+            .store(in: &cancellables)
+
+        prefs.$timesheetMenuBarIcon
+            .removeDuplicates()
+            .sink { [weak self] show in self?.setTimesheetIconVisible(show) }
+            .store(in: &cancellables)
 
         if Snapshots.outputDirectory != nil { runSnapshots() }
     }
@@ -64,6 +90,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationWillTerminate(_ notification: Notification) {
         // Log whatever is running so quitting never loses time.
         model.stop()
+    }
+
+    /// `pkill`, `make run` and logout send SIGTERM, which would otherwise kill
+    /// the app without logging the running session. Route it through a normal quit.
+    private var sigtermSource: DispatchSourceSignal?
+
+    private func quitGracefullyOnSIGTERM() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        sigtermSource = source
     }
 
     /// A stopwatch left running overnight would wreck the timesheet, so pause it.
@@ -78,6 +116,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main, using: pause)
     }
 
+    private func perform(_ action: HotkeyAction) {
+        switch action {
+        case .togglePanel:
+            panel.toggle(below: statusItem.button)
+        case .startPause:
+            model.toggle()
+        case .countUp:
+            model.startCountUp()
+        case .stop:
+            model.stop()
+        case .timesheet:
+            if timesheet.isFrontmost { timesheet.close() } else { openTimesheet() }
+        case .floating:
+            if floating.isVisible { floating.close() } else { floating.show() }
+        }
+    }
+
+    private func setTimesheetIconVisible(_ visible: Bool) {
+        if visible, timesheetIcon == nil {
+            timesheetIcon = TimesheetStatusItem { [weak self] in self?.openTimesheet() }
+        } else if !visible {
+            timesheetIcon?.remove()
+            timesheetIcon = nil
+        }
+    }
+
     private func openTimesheet() {
         panel.close()
         timesheet.show()
@@ -88,8 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         Snapshots.capture(StatusItemController.image(text: "45:00", boxed: true, alpha: 0.5), name: "1-menubar-idle", background: menuBar)
         Snapshots.capture(StatusItemController.image(text: "29:41", boxed: true, alpha: 1), name: "1-menubar-running", background: menuBar)
 
-        // Put the user's own task/duration back afterwards.
-        let savedTask = log.currentTask, savedMinutes = prefs.lastMinutes
         model.setMinutes(45)
         log.currentTask = "Write Q4 planning doc"
         panel.show(below: statusItem.button)
@@ -111,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         // Borderless offscreen copy, tall enough to include the session log.
                         let tall = NSWindow(contentRect: NSRect(x: -4000, y: 0, width: 920, height: 1500),
                                             styleMask: .borderless, backing: .buffered, defer: false)
-                        tall.contentView = NSHostingView(rootView: TimesheetView(log: log))
+                        tall.contentView = NSHostingView(rootView: TimesheetView(state: TimesheetState(log: log), log: log))
                         tall.orderFrontRegardless()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
                             if let window = timesheet.nsWindow {
@@ -119,10 +181,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                             }
                             Snapshots.capture(tall, name: "7-timesheet-full", background: .white)
                             tall.orderOut(nil)
-                            model.stop()
-                            log.currentTask = savedTask
-                            prefs.lastMinutes = savedMinutes
-                            NSApp.terminate(nil)
+                            shortcuts.show()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [self] in
+                                if let window = shortcuts.nsWindow {
+                                    Snapshots.capture(window, name: "8-shortcuts", background: .white)
+                                }
+                                model.stop()
+                                NSApp.terminate(nil)
+                            }
                         }
                     }
                 }

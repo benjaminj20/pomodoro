@@ -8,6 +8,7 @@ final class SettingsWindowController {
     private let log: TimeLog
     private var window: NSWindow?
     var onOpenTimesheet: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
 
     init(prefs: Preferences, log: TimeLog) {
         self.prefs = prefs
@@ -16,9 +17,12 @@ final class SettingsWindowController {
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: SettingsView(prefs: prefs, log: log) { [weak self] in
-                self?.onOpenTimesheet?()
-            })
+            let hosting = NSHostingController(rootView: SettingsView(
+                prefs: prefs,
+                log: log,
+                onOpenTimesheet: { [weak self] in self?.onOpenTimesheet?() },
+                onShowShortcuts: { [weak self] in self?.onShowShortcuts?() }
+            ))
             let window = NSWindow(contentViewController: hosting)
             window.title = "Pomodoro Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
@@ -38,12 +42,15 @@ struct SettingsView: View {
     @ObservedObject var prefs: Preferences
     var log: TimeLog
     var onOpenTimesheet: () -> Void
+    var onShowShortcuts: () -> Void
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchAtLoginError: String?
+    @ObservedObject private var hotkeyCenter = HotkeyCenter.shared
 
     var body: some View {
         Form {
             presetsSection
+            keyboardSection
             interactionSection
             timesheetSection
             menuBarSection
@@ -107,6 +114,39 @@ struct SettingsView: View {
         )
     }
 
+    // MARK: Keyboard
+
+    private var keyboardSection: some View {
+        Section {
+            Toggle("Global shortcuts (work from any app)", isOn: $prefs.hotkeysEnabled)
+            ForEach(HotkeyAction.allCases) { action in
+                LabeledContent(action.title) {
+                    HotkeyRecorder(
+                        hotkey: prefs.hotkeys[action] ?? nil,
+                        conflict: prefs.hotkeysEnabled && hotkeyCenter.conflicts.contains(action),
+                        onChange: { prefs.hotkeys[action] = .some($0) },
+                        onRecordingChange: { recording in
+                            recording ? HotkeyCenter.shared.suspend() : HotkeyCenter.shared.resume()
+                        }
+                    )
+                }
+                .disabled(!prefs.hotkeysEnabled)
+            }
+            HStack {
+                Button("Show All Shortcuts…", action: onShowShortcuts)
+                Spacer()
+                Button("Restore Defaults") {
+                    prefs.hotkeys = Dictionary(uniqueKeysWithValues: HotkeyAction.allCases.map { ($0, $0.defaultHotkey) })
+                }
+            }
+        } header: {
+            Text("Keyboard")
+        } footer: {
+            Text("Click a shortcut, then press the new keys (needs ⌃, ⌥ or ⌘). ⌫ clears it, esc cancels. Press ? or ⌘/ in the app to see every shortcut.")
+                .settingsFootnote()
+        }
+    }
+
     // MARK: Interaction
 
     private var interactionSection: some View {
@@ -124,7 +164,7 @@ struct SettingsView: View {
         } header: {
             Text("Interaction")
         } footer: {
-            Text("⌥-click the menu bar timer for the other action, right-click for a quick menu. In the panel: space starts/pauses, U counts up, ←/→ nudge by a minute (⇧ for 5), ⌘T opens the timesheet, esc closes.")
+            Text("⌥-click the menu bar timer for the other action, right-click for a quick menu. Keyboard shortcuts are listed under Keyboard above.")
                 .settingsFootnote()
         }
     }
@@ -160,6 +200,7 @@ struct SettingsView: View {
             }
             Toggle("Show an icon instead of the time when idle", isOn: $prefs.iconWhenIdle)
             Toggle("Show the task name while a timer runs", isOn: $prefs.menuBarShowsTask)
+            Toggle("Show a timesheet icon in the menu bar", isOn: $prefs.timesheetMenuBarIcon)
         }
     }
 

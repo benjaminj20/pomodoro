@@ -9,11 +9,13 @@ debug:
 # Rebuild, quit any running copy, launch the fresh build.
 run: app
 	@pkill -x Pomodoro || true
+	@while pgrep -x Pomodoro >/dev/null; do sleep 0.2; done; sleep 1
 	@open build/Pomodoro.app
 
 # Copy into /Applications (needed for "Launch at login").
 install: app
 	@pkill -x Pomodoro || true
+	@while pgrep -x Pomodoro >/dev/null; do sleep 0.2; done; sleep 1
 	@rm -rf /Applications/Pomodoro.app
 	@cp -R build/Pomodoro.app /Applications/
 	@open /Applications/Pomodoro.app
@@ -32,8 +34,8 @@ clean:
 	@rm -rf build .build
 
 # Render each window to .context/snapshots/*.png (no screen-recording permission needed).
+# Runs alongside your real copy with its own data and settings.
 snapshots: app
-	@pkill -x Pomodoro || true
 	@rm -rf .context/snapshots
 	@rm -rf "$(CURDIR)/build/snapshot-data"
 	@POMODORO_DATA_DIR="$(CURDIR)/build/snapshot-data" POMODORO_SNAPSHOT_DIR="$(CURDIR)/.context/snapshots" build/Pomodoro.app/Contents/MacOS/Pomodoro

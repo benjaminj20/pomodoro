@@ -3,31 +3,66 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
-final class TimesheetWindowController {
+final class TimesheetWindowController: NSObject, NSWindowDelegate {
     private let log: TimeLog
+    private lazy var state = TimesheetState(log: log)
     private var window: NSWindow?
+    private var keyMonitor: Any?
 
     init(log: TimeLog) {
         self.log = log
     }
 
     var nsWindow: NSWindow? { window }
+    var onShowShortcuts: (() -> Void)? {
+        get { state.onShowShortcuts }
+        set { state.onShowShortcuts = newValue }
+    }
+    var isFrontmost: Bool { window?.isKeyWindow == true && NSApp.isActive }
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: TimesheetView(log: log))
+            let hosting = NSHostingController(rootView: TimesheetView(state: state, log: log))
             let window = NSWindow(contentViewController: hosting)
             window.title = "Timesheet"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.setContentSize(NSSize(width: 920, height: 760))
             window.contentMinSize = NSSize(width: 780, height: 520)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             window.setFrameAutosaveName("TimesheetWindow")
             self.window = window
+            installKeyMonitor()
         }
+        // Always open on today.
+        if !(window?.isVisible ?? false) { state.goToToday() }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func close() {
+        window?.performClose(nil)
+    }
+
+    /// Timesheet shortcuts, active whenever the window has the keyboard and
+    /// you're not typing in a field or looking at a sheet/alert.
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let keyCode = event.keyCode
+            let characters = event.charactersIgnoringModifiers
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self, let window = self.window, window.isKeyWindow,
+                      window.attachedSheet == nil, !(window.firstResponder is NSTextView) else { return false }
+                if keyCode == 53 { // esc: clear selection, then close
+                    if self.state.selectedSessionID != nil { self.state.selectedSessionID = nil } else { window.performClose(nil) }
+                    return true
+                }
+                return self.state.handleKey(keyCode: keyCode, characters: characters, flags: flags)
+            }
+            return handled ? nil : event
+        }
     }
 }
 
@@ -83,131 +118,151 @@ extension NSColor {
 // MARK: - Root
 
 struct TimesheetView: View {
+    @ObservedObject var state: TimesheetState
     @ObservedObject var log: TimeLog
-    @State private var weekStart = Date()
-    @State private var editing: SessionDraft?
-    @State private var renaming: TimesheetReport.Row?
-    @State private var renameText = ""
 
-    private var calendar: Calendar { Calendar.current }
+    private var calendar: Calendar { state.calendar }
 
     var body: some View {
         // Re-render every 30s so a running session's time grows live.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let week = TimesheetReport.week(containing: weekStart, calendar: calendar)
-            let report = TimesheetReport(sessions: log.allSessions(now: context.date), week: week, calendar: calendar)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        header(week: week)
-                        if let live = log.liveSession(now: context.date) {
-                            Label("Tracking “\(live.displayTask)” — \(TimeFormatter.duration(live.duration)) so far", systemImage: "record.circle")
-                                .font(.system(size: 12))
-                                .foregroundStyle(ChartPalette.secondaryInk)
-                        }
-                    }
-                    StatTiles(report: report)
-                    if report.total == 0 {
-                        EmptyWeek()
-                    } else {
-                        Card(title: "Time by day") {
-                            DayColumnsChart(report: report, calendar: calendar)
-                        }
-                        Card(title: "Tasks") {
-                            TaskGrid(report: report, calendar: calendar) { row in
-                                renameText = row.name
-                                renaming = row
+            let report = state.report(now: context.date)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            header
+                            if let live = log.liveSession(now: context.date) {
+                                Label("Tracking “\(live.displayTask)” — \(TimeFormatter.duration(live.duration)) so far", systemImage: "record.circle")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(ChartPalette.secondaryInk)
                             }
                         }
-                        Card(title: "Log") {
-                            SessionLog(report: report, calendar: calendar, liveID: log.active?.id) { session in
-                                editing = SessionDraft(session)
-                            } onDelete: { session in
-                                log.delete(session.id)
+                        StatTiles(report: report)
+                        if report.total == 0 {
+                            EmptyWeek()
+                        } else {
+                            let day = state.resolvedDay(report, now: context.date)
+                            Card(title: "Day breakdown") {
+                                DayTimeline(report: report, day: day, now: context.date, calendar: calendar,
+                                            showOvernight: $state.showOvernight)
+                            } accessory: {
+                                dayPicker(report, selection: day)
+                            }
+                            Card(title: state.logShowsWeek ? "Log — whole week" : "Log") {
+                                SessionLog(report: report, days: state.logDays(report, now: context.date),
+                                           liveID: log.active?.id, selectedID: state.selectedSessionID,
+                                           onSelect: { state.selectedSessionID = $0.id },
+                                           onEdit: { state.edit($0) },
+                                           onDelete: { state.requestDelete($0) })
+                            } accessory: {
+                                Picker("Log range", selection: $state.logShowsWeek) {
+                                    Text("Day").tag(false)
+                                    Text("Week").tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .fixedSize()
+                                .help("Show this day or the whole week (W)")
+                            }
+                            Card(title: "Time by day") {
+                                DayColumnsChart(report: report, calendar: calendar)
+                            }
+                            Card(title: "Tasks") {
+                                TaskGrid(report: report, calendar: calendar) { row in
+                                    state.rename(task: row.name)
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 28)
+                    .padding(.top, 36)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 28)
-                .padding(.top, 36)
-                .padding(.bottom, 28)
+                .onChange(of: state.selectedSessionID) { _, id in
+                    if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) } }
+                }
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .sheet(item: $editing) { draft in
+        .sheet(item: $state.editing) { draft in
             SessionEditor(draft: draft, recentTasks: log.recentTasks(limit: 12)) { session in
-                if log.sessions.contains(where: { $0.id == session.id }) {
-                    log.update(session)
-                } else {
-                    log.insert(session)
-                }
+                state.save(session)
             } onDelete: { id in
                 log.delete(id)
             }
         }
-        .alert("Rename Task", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Task", text: $renameText)
-            Button("Rename") {
-                if let renaming { log.renameTask(renaming.name, to: renameText) }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
+        .alert("Rename Task", isPresented: Binding(get: { state.renaming != nil }, set: { if !$0 { state.renaming = nil } })) {
+            TextField("Task", text: $state.renameText)
+            Button("Rename") { state.commitRename() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { state.renaming = nil }
         } message: {
-            Text("Renames every logged session of “\(renaming?.name ?? "")”. Use an existing name to merge tasks.")
+            Text("Renames every logged session of “\(state.renaming ?? "")”. Use an existing name to merge tasks.")
+        }
+        .alert("Delete this entry?", isPresented: Binding(get: { state.pendingDelete != nil }, set: { if !$0 { state.pendingDelete = nil } })) {
+            Button("Delete", role: .destructive) { state.confirmDelete() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { state.pendingDelete = nil }
+        } message: {
+            if let session = state.pendingDelete {
+                Text("“\(session.displayTask)”, \(session.start.formatted(date: .abbreviated, time: .shortened)), \(TimeFormatter.duration(session.duration)).")
+            }
         }
     }
 
-    private func header(week: DateInterval) -> some View {
-        let isCurrentWeek = week.contains(Date())
-        return HStack(spacing: 10) {
-            ControlGroup {
-                Button { shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
-                    .help("Previous week")
-                Button { shiftWeek(1) } label: { Image(systemName: "chevron.right") }
-                    .help("Next week")
-            }
-            .fixedSize()
-            Text(Self.weekTitle(week, calendar: calendar))
-                .font(.system(size: 20, weight: .semibold))
-            if !isCurrentWeek {
-                Button("This Week") { weekStart = Date() }
-            }
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ControlGroup {
+                    Button { state.shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
+                        .help("Previous week (⇧←)")
+                    Button { state.shiftWeek(1) } label: { Image(systemName: "chevron.right") }
+                        .help("Next week (⇧→)")
+                }
+                .fixedSize()
+                Text(Self.weekTitle(state.week, calendar: calendar))
+                    .font(.system(size: 20, weight: .semibold))
+                if !state.isCurrentWeek || state.selectedDay != nil {
+                    Button("Today") { state.goToToday() }
+                        .help("Go to today (T)")
+                }
 
-            Spacer()
+                Spacer()
 
-            Button {
-                let start = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: isCurrentWeek ? Date() : week.start) ?? Date()
-                editing = SessionDraft(task: log.currentTask, start: start, minutes: 30)
-            } label: {
-                Label("Add Entry", systemImage: "plus")
+                Button { state.addEntry() } label: {
+                    Label("Add Entry", systemImage: "plus")
+                }
+                .help("Add an entry for the untracked gap (N)")
+                Menu {
+                    Button("Export This Week as CSV…") { state.exportWeek() }
+                    Button("Export Everything as CSV…") { state.exportAll() }
+                    Divider()
+                    Button("Show Data File in Finder") { log.revealInFinder() }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .fixedSize()
+                .help("Export as CSV (⌘E)")
+                Button { state.onShowShortcuts?() } label: {
+                    Image(systemName: "keyboard")
+                }
+                .help("Keyboard shortcuts (?)")
             }
-            Menu {
-                Button("Export This Week as CSV…") { export(sessions: weekSessions(week), name: "Timesheet \(Self.fileDate(week.start))") }
-                Button("Export Everything as CSV…") { export(sessions: log.sessions, name: "Timesheet (all)") }
-                Divider()
-                Button("Show Data File in Finder") { log.revealInFinder() }
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-            }
-            .fixedSize()
+            .buttonStyle(.bordered)
         }
-        .buttonStyle(.bordered)
     }
 
-    private func shiftWeek(_ delta: Int) {
-        weekStart = calendar.date(byAdding: .weekOfYear, value: delta, to: weekStart) ?? weekStart
-    }
-
-    private func weekSessions(_ week: DateInterval) -> [Session] {
-        log.sessions.filter { $0.end > week.start && $0.start < week.end }
-    }
-
-    private func export(sessions: [Session], name: String) {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "\(name).csv"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? log.csv(for: sessions).write(to: url, atomically: true, encoding: .utf8)
+    private func dayPicker(_ report: TimesheetReport, selection: Int) -> some View {
+        Picker("Day", selection: Binding(get: { selection }, set: { state.selectedDay = $0 })) {
+            ForEach(0..<7, id: \.self) { index in
+                Text(report.days[index].start.formatted(.dateTime.weekday(.abbreviated).day())).tag(index)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Previous / next day (← →)")
     }
 
     static func weekTitle(_ week: DateInterval, calendar: Calendar) -> String {
@@ -216,32 +271,36 @@ struct TimesheetView: View {
         formatter.dateTemplate = "MMMdy"
         return formatter.string(from: week.start, to: last)
     }
-
-    private static func fileDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
 }
 
 // MARK: - Building blocks
 
-private struct Card<Content: View>: View {
+private struct Card<Content: View, Accessory: View>: View {
     var title: String
     @ViewBuilder var content: Content
+    @ViewBuilder var accessory: Accessory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ChartPalette.secondaryInk)
+            HStack {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ChartPalette.secondaryInk)
+                Spacer()
+                accessory
+            }
             content
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(ChartPalette.surface))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(ChartPalette.border))
+    }
+}
+
+extension Card where Accessory == EmptyView {
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.init(title: title, content: content, accessory: { EmptyView() })
     }
 }
 
@@ -300,7 +359,7 @@ private struct EmptyWeek: View {
     }
 }
 
-private struct Swatch: View {
+struct Swatch: View {
     var slot: Int?
     var body: some View {
         RoundedRectangle(cornerRadius: 2.5, style: .continuous)
@@ -581,17 +640,23 @@ private struct TaskGrid: View {
 
 private struct SessionLog: View {
     var report: TimesheetReport
-    var calendar: Calendar
+    var days: [Int]
     var liveID: Session.ID?
+    var selectedID: Session.ID?
+    var onSelect: (Session) -> Void
     var onEdit: (Session) -> Void
     var onDelete: (Session) -> Void
 
     var body: some View {
+        let shown = days.filter { !report.sessionsByDay[$0].isEmpty }
         VStack(alignment: .leading, spacing: 18) {
-            ForEach(Array((0..<7).reversed()), id: \.self) { day in
-                if !report.sessionsByDay[day].isEmpty {
-                    daySection(day)
-                }
+            if shown.isEmpty, let day = days.first {
+                Text("Nothing logged on \(report.days[day].start.formatted(.dateTime.weekday(.wide))). Press N to add an entry.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChartPalette.mutedInk)
+            }
+            ForEach(shown, id: \.self) { day in
+                daySection(day)
             }
         }
     }
@@ -615,9 +680,12 @@ private struct SessionLog: View {
                     seconds: session.duration(in: interval),
                     slot: report.slot(for: session.task),
                     isLive: session.id == liveID,
+                    isSelected: session.id == selectedID,
+                    onSelect: { onSelect(session) },
                     onEdit: { onEdit(session) },
                     onDelete: { onDelete(session) }
                 )
+                .id(session.id)
             }
         }
     }
@@ -628,6 +696,8 @@ private struct SessionRow: View {
     var seconds: TimeInterval
     var slot: Int?
     var isLive: Bool
+    var isSelected: Bool
+    var onSelect: () -> Void
     var onEdit: () -> Void
     var onDelete: () -> Void
 
@@ -661,10 +731,18 @@ private struct SessionRow: View {
         }
         .padding(.vertical, 5)
         .padding(.horizontal, 6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(isHovering ? Color.primary.opacity(0.04) : .clear))
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor.opacity(0.18) : (isHovering ? Color.primary.opacity(0.04) : .clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.6) : .clear)
+        )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture(count: 2) { if !isLive { onEdit() } }
+        .onTapGesture { onSelect() }
         .contextMenu {
             if !isLive {
                 Button("Edit…", action: onEdit)
@@ -733,6 +811,7 @@ private struct SessionEditor: View {
     var onDelete: (Session.ID) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var taskFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -743,6 +822,7 @@ private struct SessionEditor: View {
             Form {
                 HStack {
                     TextField("Task", text: $draft.task, prompt: Text("What were you working on?"))
+                        .focused($taskFocused)
                     if !recentTasks.isEmpty {
                         Menu {
                             ForEach(recentTasks, id: \.self) { task in
@@ -776,6 +856,8 @@ private struct SessionEditor: View {
                         onDelete(original.id)
                         dismiss()
                     }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .help("⌘⌫")
                 }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -790,6 +872,7 @@ private struct SessionEditor: View {
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: 440)
+        .onAppear { taskFocused = true }
     }
 
     private var endDate: Date { draft.start.addingTimeInterval(TimeInterval(max(1, draft.minutes) * 60)) }

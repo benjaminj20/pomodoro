@@ -59,7 +59,7 @@ final class TimeLog: ObservableObject, SessionRecorder {
     /// is running renames the session in progress.
     @Published var currentTask: String {
         didSet {
-            UserDefaults.standard.set(currentTask, forKey: "currentTask")
+            UserDefaults.app.set(currentTask, forKey: "currentTask")
             if active != nil {
                 active?.task = Self.clean(currentTask)
                 checkpoint()
@@ -74,7 +74,7 @@ final class TimeLog: ObservableObject, SessionRecorder {
 
     init(directory: URL = TimeLog.defaultDirectory) {
         self.directory = directory
-        currentTask = UserDefaults.standard.string(forKey: "currentTask") ?? ""
+        currentTask = UserDefaults.app.string(forKey: "currentTask") ?? ""
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         load()
         recoverCrashedSession()
@@ -146,6 +146,23 @@ final class TimeLog: ObservableObject, SessionRecorder {
             }
         }
         return result
+    }
+
+    /// The default for a manual entry: from the minute after the last entry
+    /// ended until now (or until the running timer started). Falls back to the
+    /// last 30 minutes when nothing has been logged yet today.
+    func untrackedGap(now: Date = Date(), calendar: Calendar = .current) -> (start: Date, minutes: Int) {
+        let end = liveSession(now: now)?.start ?? now
+        let endMinute = calendar.dateInterval(of: .minute, for: end)?.start ?? end
+
+        if let lastEnd = sessions.map(\.end).filter({ $0 <= end }).max(),
+           calendar.isDate(lastEnd, inSameDayAs: end),
+           let lastMinute = calendar.dateInterval(of: .minute, for: lastEnd)?.start {
+            let start = lastMinute.addingTimeInterval(60)
+            let minutes = Int(endMinute.timeIntervalSince(start) / 60)
+            return (start, max(1, minutes))
+        }
+        return (endMinute.addingTimeInterval(-30 * 60), 30)
     }
 
     // MARK: - Editing

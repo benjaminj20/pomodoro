@@ -8,6 +8,7 @@ final class StatusItemController: NSObject {
     var onShowFloating: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenTimesheet: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let model: TimerModel
@@ -182,6 +183,7 @@ final class StatusItemController: NSObject {
 
         menu.addItem(.separator())
         menu.addItem(item("Timesheet…", key: "t") { [weak self] in self?.onOpenTimesheet?() })
+        menu.addItem(item("Keyboard Shortcuts…", key: "/") { [weak self] in self?.onShowShortcuts?() })
         menu.addItem(item("Settings…", key: ",") { [weak self] in self?.onOpenSettings?() })
         menu.addItem(item("Quit Pomodoro", key: "q") { NSApp.terminate(nil) })
 
@@ -192,6 +194,32 @@ final class StatusItemController: NSObject {
         let item = ClosureMenuItem(title: title, keyEquivalent: key, handler: action)
         return item
     }
+}
+
+/// A second, optional menu bar icon that opens the timesheet in one click.
+@MainActor
+final class TimesheetStatusItem: NSObject {
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let onClick: () -> Void
+
+    init(onClick: @escaping () -> Void) {
+        self.onClick = onClick
+        super.init()
+        if let button = statusItem.button {
+            let image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: "Timesheet")
+            image?.isTemplate = true
+            button.image = image
+            button.toolTip = "Timesheet"
+            button.target = self
+            button.action = #selector(clicked)
+        }
+    }
+
+    func remove() {
+        NSStatusBar.system.removeStatusItem(statusItem)
+    }
+
+    @objc private func clicked() { onClick() }
 }
 
 /// NSMenuItem that runs a closure, so menus can be built inline.
