@@ -33,6 +33,7 @@ final class TimesheetWindowController: NSObject, NSWindowDelegate {
             window.center()
             window.setFrameAutosaveName("TimesheetWindow")
             self.window = window
+            state.presentingWindow = window
             installKeyMonitor()
         }
         // Always open on today.
@@ -185,6 +186,11 @@ struct TimesheetView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let url = state.exportedURL {
+                exportConfirmation(url)
+            }
+        }
         .sheet(item: $state.editing) { draft in
             SessionEditor(draft: draft, recentTasks: log.recentTasks(limit: 12)) { session in
                 state.save(session)
@@ -209,6 +215,44 @@ struct TimesheetView: View {
                 Text("“\(session.displayTask)”, \(session.start.formatted(date: .abbreviated, time: .shortened)), \(TimeFormatter.duration(session.duration)).")
             }
         }
+        .alert("Export failed", isPresented: Binding(get: { state.exportError != nil }, set: { if !$0 { state.exportError = nil } })) {
+            Button("OK") { state.exportError = nil }
+        } message: {
+            Text(state.exportError ?? "")
+        }
+    }
+
+    private func exportConfirmation(_ url: URL) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.system(size: 20))
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Saved \(url.lastPathComponent)")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .help(url.path)
+            .textSelection(.enabled)
+            Spacer(minLength: 12)
+            Button("Show in Finder") { state.revealExportInFinder() }
+            Button { state.exportedURL = nil } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss export confirmation")
+            .help("Dismiss export confirmation")
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 14)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .top) { Divider() }
     }
 
     private var header: some View {
