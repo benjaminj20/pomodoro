@@ -148,6 +148,34 @@ final class TimeLog: ObservableObject, SessionRecorder {
         return result
     }
 
+    /// Past tasks that complete what's been typed, most likely first. Names
+    /// starting with the text come before ones with a later word starting with
+    /// it ("lu" → "Lunch", then "Team lunch"); within each, tasks you log often
+    /// and lately win, each session counting half as much every two weeks.
+    func suggestedTasks(for text: String, limit: Int = 5, now: Date = Date()) -> [String] {
+        let query = TimeLog.clean(text).lowercased()
+        guard !query.isEmpty else { return [] }
+        var candidates: [String: (name: String, score: Double, isPrefix: Bool)] = [:]
+        for session in sessions.reversed() where !session.task.isEmpty {
+            let key = Self.key(session.task)
+            let weight = pow(0.5, max(0, now.timeIntervalSince(session.start)) / (14 * 86_400))
+            if let existing = candidates[key] {
+                candidates[key]?.score = existing.score + weight
+                continue
+            }
+            guard key != query else { continue }
+            let isPrefix = key.hasPrefix(query)
+            guard isPrefix || key.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(query) })
+            else { continue }
+            // Newest first, so the name keeps its latest spelling.
+            candidates[key] = (Self.clean(session.task), weight, isPrefix)
+        }
+        return candidates.values
+            .sorted { $0.isPrefix != $1.isPrefix ? $0.isPrefix : $0.score > $1.score }
+            .prefix(limit)
+            .map(\.name)
+    }
+
     /// The default for a manual entry: from the minute after the last entry
     /// ended until now (or until the running timer started). Falls back to the
     /// last 30 minutes when nothing has been logged yet today.

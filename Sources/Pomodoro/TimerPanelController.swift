@@ -190,6 +190,8 @@ final class TimerPanelController: NSObject, NSWindowDelegate {
             }
         }
 
+        if isEditing, handleSuggestionKey(key) { return true }
+
         if key.keyCode == 53 { // esc
             close()
             return true
@@ -248,6 +250,35 @@ final class TimerPanelController: NSObject, NSWindowDelegate {
     private func selectPreset(_ number: Int) -> Bool {
         guard number >= 1, number <= prefs.presets.count else { return false }
         model.setMinutes(prefs.presets[number - 1])
+        return true
+    }
+
+    /// While suggestions are showing under the task field: ↓/↑ move through
+    /// them, ↩ takes the highlighted one (with none highlighted it starts as
+    /// usual), ⇥ takes the highlighted or top one, esc hides them.
+    private func handleSuggestionKey(_ key: KeyPress) -> Bool {
+        guard key.flags.isDisjoint(with: [.command, .control, .option]) else { return false }
+        let suggestions = state.suggestions(in: log)
+        guard !suggestions.isEmpty else { return false }
+        let query = log.currentTask
+        let highlighted = state.highlightedIndex(for: query, count: suggestions.count)
+
+        switch key.keyCode {
+        case 125: // down
+            state.highlight = (query, min((highlighted ?? -1) + 1, suggestions.count - 1))
+        case 126: // up: past the top goes back to just your text
+            if let highlighted { state.highlight = highlighted > 0 ? (query, highlighted - 1) : nil }
+        case 36, 76: // return, enter
+            guard let highlighted else { return false }
+            state.accept(suggestions[highlighted], in: log)
+        case 48: // tab
+            state.accept(suggestions[highlighted ?? 0], in: log)
+        case 53: // esc
+            state.dismissedQuery = query
+            state.highlight = nil
+        default:
+            return false
+        }
         return true
     }
 

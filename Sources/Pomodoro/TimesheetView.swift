@@ -849,6 +849,8 @@ private struct SessionEditor: View {
                 }
             }
             .formStyle(.grouped)
+            // ↩ in any field saves; the focused field eats the key before the default button sees it.
+            .onSubmit(save)
 
             HStack {
                 if let original = draft.original {
@@ -862,17 +864,20 @@ private struct SessionEditor: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    onSave(makeSession())
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(draft.minutes < 1)
+                Button("Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(draft.minutes < 1)
             }
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: 440)
         .onAppear { taskFocused = true }
+    }
+
+    private func save() {
+        guard draft.minutes >= 1 else { return }
+        onSave(makeSession())
+        dismiss()
     }
 
     private var endDate: Date { draft.start.addingTimeInterval(TimeInterval(max(1, draft.minutes) * 60)) }

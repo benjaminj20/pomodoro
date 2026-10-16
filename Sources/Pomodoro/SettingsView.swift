@@ -174,7 +174,8 @@ struct SettingsView: View {
     private var timesheetSection: some View {
         Section {
             Toggle("Put the cursor in the task field when the panel opens", isOn: $prefs.focusTaskOnOpen)
-            Toggle("Pause count-up when the Mac sleeps or locks", isOn: $prefs.pauseCountUpOnSleep)
+            Toggle("Pause count-up when the Mac sleeps", isOn: $prefs.pauseCountUpOnSleep)
+            Toggle("Pause count-up when the screen locks", isOn: $prefs.pauseCountUpOnLock)
             HStack {
                 Button("Open Timesheet", action: onOpenTimesheet)
                 Button("Show Data File in Finder") { log.revealInFinder() }
@@ -272,7 +273,13 @@ struct SettingsView: View {
             }
             launchAtLoginError = nil
         } catch {
-            launchAtLoginError = "Couldn't update login item: \(error.localizedDescription). Run the app from /Applications (make install) and try again."
+            // Rebuilding or deleting the .app while this copy runs leaves the process
+            // pointing at a missing bundle, which SMAppService rejects as "Invalid argument".
+            if !FileManager.default.fileExists(atPath: Bundle.main.bundlePath) {
+                launchAtLoginError = "Couldn't update login item: this copy of Pomodoro was moved or deleted while running. Quit and reopen Pomodoro, then try again."
+            } else {
+                launchAtLoginError = "Couldn't update login item: \(error.localizedDescription)."
+            }
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }

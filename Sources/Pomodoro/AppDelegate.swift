@@ -104,16 +104,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         sigtermSource = source
     }
 
-    /// A stopwatch left running overnight would wreck the timesheet, so pause it.
+    /// A stopwatch left running overnight would wreck the timesheet, so pause it
+    /// on sleep. Locking alone keeps it running by default (stepping out for lunch).
     private func observeSleepAndLock() {
-        let pause: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.prefs.pauseCountUpOnSleep, self.model.isCountingUp else { return }
-                self.model.pause()
+        func pause(when enabled: @escaping @MainActor (Preferences) -> Bool) -> @Sendable (Notification) -> Void {
+            { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, enabled(self.prefs), self.model.isCountingUp else { return }
+                    self.model.pause()
+                }
             }
         }
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main, using: pause)
-        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main, using: pause)
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main,
+                                                          using: pause { $0.pauseCountUpOnSleep })
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main,
+                                                            using: pause { $0.pauseCountUpOnLock })
     }
 
     private func perform(_ action: HotkeyAction) {
@@ -157,6 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel.show(below: statusItem.button)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [self] in
             Snapshots.capture(panel.panelWindow, name: "2-panel-idle")
+            log.currentTask = "e"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
+            Snapshots.capture(panel.panelWindow, name: "2b-panel-suggestions")
+            log.currentTask = "Write Q4 planning doc"
             model.start()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [self] in
                 Snapshots.capture(panel.panelWindow, name: "3-panel-running")
@@ -192,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         }
                     }
                 }
+            }
             }
         }
     }
