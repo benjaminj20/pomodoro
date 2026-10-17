@@ -28,6 +28,7 @@ Other targets: `make debug`, `make icon` (regenerate the app icon),
 | **Timer panel** | Type a one-line description of what you're doing, then drag the tick slider (0–120 min by default) or tap a preset. `start` counts down, `count up` runs a stopwatch for tasks of unknown length; `pause` / `resume` / `stop` while running. `…` → save current time as a preset, Timesheet, Settings, Quit. Right-click a preset to remove it. |
 | **Floating timer** | Black pill that floats above all windows and Spaces. Drag to move (position is remembered), double-click to pause/resume, hover → × to close. Pulses when time's up. |
 | **Timesheet** | Every session is logged with its task and real running time (pauses excluded). Opens on today: a timeline of the day (one row per task), that day's log, then the week's chart by day and task × day grid. Edit, delete or add entries; overnight hours are collapsed. Export a week (or everything) as CSV. Right-click a task to rename or merge it. |
+| **Categories** | Group similar work ("Pipeline", "Customers"…) without changing how you type tasks. Right-click any task → Category → New Category, then drag tasks onto it. You only file a few: the app files look-alikes for you (marked with a small wand icon), learning from words you use ("gift", "cold", "GAL") and from meaning via macOS's built-in on-device language model. Unclear ones wait in Unsorted rather than being guessed badly. Once you have a category, the chart, colors and grid roll up by category. Everything stays offline. |
 | **Settings** | Edit presets; choose what clicking the menu bar or a preset does; menu bar style/format; floating timer size, opacity, when it appears; completion sound and notification; launch at login. |
 
 ## Keyboard
@@ -48,14 +49,16 @@ up · `⌫` stop & log (then type the next task) · `←`/`→` ∓1 min (`⇧` 
 
 **Timesheet:** `←`/`→` day · `⇧←`/`⇧→` or `[`/`]` week · `T` today · `↑`/`↓`
 select an entry · `↩` edit · `⌫` delete (`↩` confirms) · `N` add (fills the gap
-since your last entry) · `R` rename task · `W` log day/week ·
+since your last entry) · `R` rename task · `1`–`9` file the entry's task in a
+category (`0` unsorts it) · `W` log day/week ·
 `⌘E`/`⌘⇧E` export · `esc` close.
 
 ## Your data
 
 Sessions are stored as readable JSON in
 `~/Library/Application Support/Pomodoro/timesheet.json` (Settings → Show Data
-File in Finder). The running session is checkpointed every 30 seconds, so a
+File in Finder); categories and the tasks you've filed sit beside it in
+`categories.json`. The running session is checkpointed every 30 seconds, so a
 crash or force-quit loses at most that much. Quitting the app logs whatever is
 running. Sessions under 30 seconds are treated as accidental and skipped. A
 running count-up pauses automatically when the Mac sleeps; locking the screen
