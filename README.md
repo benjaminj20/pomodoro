@@ -39,8 +39,10 @@ Everything works without the mouse. Press `?` or `⌘/` anywhere in the app (or 
 `⌃⌥T` timesheet · `⌃⌥F` floating timer.
 
 **Timer panel:** the task field is focused when it opens. Type, then `↩` to
-count down or `⌘↩` to count up. `↑`/`↓` in the field cycle recent tasks, `⇥`
-leaves/returns to it. Outside the field: `space`/`S` start or pause · `U` count
+count down or `⌘↩` to count up. As you type, past tasks that match drop down
+below, most-used and most-recent first: `↓`/`↑` to pick one, `↩` or `⇥` to take
+it, `esc` to hide the list. With no suggestions showing, `↑`/`↓` cycle recent
+tasks and `⇥` leaves/returns to the field. Outside the field: `space`/`S` start or pause · `U` count
 up · `⌫` stop & log (then type the next task) · `←`/`→` ∓1 min (`⇧` for 5) ·
 `1`–`8` presets · `F` floating timer · `⌘T` timesheet · `⌘,` settings · `esc` close.
 
@@ -56,8 +58,8 @@ Sessions are stored as readable JSON in
 File in Finder). The running session is checkpointed every 30 seconds, so a
 crash or force-quit loses at most that much. Quitting the app logs whatever is
 running. Sessions under 30 seconds are treated as accidental and skipped. A
-running count-up pauses automatically when the Mac sleeps or locks (toggle in
-Settings).
+running count-up pauses automatically when the Mac sleeps; locking the screen
+leaves it running unless you turn that on too (both in Settings).
 
 CSV exports open a Save dialog in Downloads. You can choose another folder.
 After saving, the timesheet shows the filename and folder, with a **Show in

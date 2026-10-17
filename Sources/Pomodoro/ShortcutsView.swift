@@ -162,7 +162,7 @@ struct ShortcutsView: View {
             Group(title: "Timer panel", subtitle: "Type what you're doing, then", items: [
                 Item(keys: ["↩"], action: "Start countdown"),
                 Item(keys: ["⌘", "↩"], action: "Start counting up"),
-                Item(keys: ["↑", "↓"], action: "Recent tasks"),
+                Item(keys: ["↑", "↓"], action: "Suggestions as you type, else recent tasks"),
                 Item(keys: ["⇥"], action: "Leave / return to task"),
                 Item(keys: ["space"], action: "Start / pause"),
                 Item(keys: ["U"], action: "Count up"),

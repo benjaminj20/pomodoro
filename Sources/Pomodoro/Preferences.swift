@@ -127,6 +127,7 @@ final class Preferences: ObservableObject {
     @Published var floatingShowsTask: Bool { didSet { defaults.set(floatingShowsTask, forKey: Key.floatingShowsTask) } }
     @Published var menuBarShowsTask: Bool { didSet { defaults.set(menuBarShowsTask, forKey: Key.menuBarShowsTask) } }
     @Published var pauseCountUpOnSleep: Bool { didSet { defaults.set(pauseCountUpOnSleep, forKey: Key.pauseCountUpOnSleep) } }
+    @Published var pauseCountUpOnLock: Bool { didSet { defaults.set(pauseCountUpOnLock, forKey: Key.pauseCountUpOnLock) } }
 
     // Global hotkeys
     @Published var hotkeysEnabled: Bool { didSet { defaults.set(hotkeysEnabled, forKey: Key.hotkeysEnabled) } }
@@ -172,6 +173,8 @@ final class Preferences: ObservableObject {
         floatingShowsTask = d.object(forKey: Key.floatingShowsTask) as? Bool ?? true
         menuBarShowsTask = d.object(forKey: Key.menuBarShowsTask) as? Bool ?? false
         pauseCountUpOnSleep = d.object(forKey: Key.pauseCountUpOnSleep) as? Bool ?? true
+        // Off by default: locking usually means stepping away mid-task (lunch, a meeting).
+        pauseCountUpOnLock = d.object(forKey: Key.pauseCountUpOnLock) as? Bool ?? false
 
         hotkeysEnabled = d.object(forKey: Key.hotkeysEnabled) as? Bool ?? true
         let storedHotkeys = d.data(forKey: Key.hotkeys)
@@ -218,6 +221,7 @@ final class Preferences: ObservableObject {
         static let floatingShowsTask = "floatingShowsTask"
         static let menuBarShowsTask = "menuBarShowsTask"
         static let pauseCountUpOnSleep = "pauseCountUpOnSleep"
+        static let pauseCountUpOnLock = "pauseCountUpOnLock"
         static let hotkeysEnabled = "hotkeysEnabled"
         static let hotkeys = "hotkeys"
         static let soundName = "soundName"

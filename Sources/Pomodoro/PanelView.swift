@@ -5,6 +5,29 @@ import SwiftUI
 @MainActor
 final class PanelState: ObservableObject {
     @Published var focusRequest = 0
+    /// Suggestion row picked with ↑/↓, remembered with the text it was picked
+    /// for so typing anything else drops it.
+    @Published var highlight: (query: String, index: Int)?
+    /// Text the suggestions were dismissed for (esc, or one was just accepted).
+    @Published var dismissedQuery: String?
+
+    static let maxSuggestions = 4
+
+    func suggestions(in log: TimeLog) -> [String] {
+        guard dismissedQuery != log.currentTask else { return [] }
+        return log.suggestedTasks(for: log.currentTask, limit: Self.maxSuggestions)
+    }
+
+    func highlightedIndex(for query: String, count: Int) -> Int? {
+        guard let highlight, highlight.query == query, highlight.index < count else { return nil }
+        return highlight.index
+    }
+
+    func accept(_ task: String, in log: TimeLog) {
+        log.currentTask = task
+        dismissedQuery = task
+        highlight = nil
+    }
 }
 
 struct PanelView: View {
@@ -88,6 +111,9 @@ struct PanelView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.14), lineWidth: 1)
         )
+        .overlay(alignment: .topLeading) {
+            if taskFocused { suggestionList }
+        }
         .environment(\.colorScheme, .dark)
         .onChange(of: state.focusRequest) { _, _ in taskFocused = true }
     }
@@ -120,6 +146,35 @@ struct PanelView: View {
                 .fill(.white.opacity(taskFocused ? 0.1 : 0.06))
         )
         .padding(.horizontal, -4)
+    }
+
+    /// Past tasks matching what's typed, dropped down over the slider.
+    /// ↓/↑ pick one, ↩ or ⇥ takes it; clicking works too.
+    @ViewBuilder
+    private var suggestionList: some View {
+        let suggestions = state.suggestions(in: log)
+        if !suggestions.isEmpty {
+            let highlighted = state.highlightedIndex(for: log.currentTask, count: suggestions.count)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(suggestions.enumerated()), id: \.element) { index, task in
+                    SuggestionRow(task: task, query: log.currentTask, isHighlighted: index == highlighted) {
+                        state.accept(task, in: log)
+                    }
+                }
+            }
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(white: 0.16))
+                    .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+            )
+            .padding(.top, 14 + 28 + 3)
+            .padding(.horizontal, 10)
+        }
     }
 
     private var recentTasksMenu: some View {
@@ -321,5 +376,45 @@ struct TextButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+    }
+}
+
+/// One suggestion, with the part you've typed in full strength.
+private struct SuggestionRow: View {
+    var task: String
+    var query: String
+    var isHighlighted: Bool
+    var action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            label
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isHighlighted ? Color.accentColor.opacity(0.85) : .white.opacity(hovering ? 0.08 : 0))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+
+    private var label: Text {
+        let typed = TimeLog.clean(query)
+        guard let range = task.range(of: typed, options: [.caseInsensitive, .anchored])
+                ?? task.range(of: " " + typed, options: .caseInsensitive) else {
+            return Text(task).foregroundColor(.white.opacity(0.9))
+        }
+        return Text(task[..<range.lowerBound]).foregroundColor(.white.opacity(0.6))
+            + Text(task[range]).foregroundColor(.white)
+            + Text(task[range.upperBound...]).foregroundColor(.white.opacity(0.6))
     }
 }
