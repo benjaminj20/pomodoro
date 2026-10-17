@@ -5,12 +5,14 @@ import UniformTypeIdentifiers
 @MainActor
 final class TimesheetWindowController: NSObject, NSWindowDelegate {
     private let log: TimeLog
-    private lazy var state = TimesheetState(log: log)
+    private let categories: Categories
+    private lazy var state = TimesheetState(log: log, categories: categories)
     private var window: NSWindow?
     private var keyMonitor: Any?
 
-    init(log: TimeLog) {
+    init(log: TimeLog, categories: Categories) {
         self.log = log
+        self.categories = categories
     }
 
     var nsWindow: NSWindow? { window }
@@ -22,7 +24,7 @@ final class TimesheetWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: TimesheetView(state: state, log: log))
+            let hosting = NSHostingController(rootView: TimesheetView(state: state, log: log, categories: categories))
             let window = NSWindow(contentViewController: hosting)
             window.title = "Timesheet"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
@@ -121,6 +123,7 @@ extension NSColor {
 struct TimesheetView: View {
     @ObservedObject var state: TimesheetState
     @ObservedObject var log: TimeLog
+    @ObservedObject var categories: Categories
 
     private var calendar: Calendar { state.calendar }
 
@@ -169,10 +172,15 @@ struct TimesheetView: View {
                             Card(title: "Time by day") {
                                 DayColumnsChart(report: report, calendar: calendar)
                             }
-                            Card(title: "Tasks") {
-                                TaskGrid(report: report, calendar: calendar) { row in
-                                    state.rename(task: row.name)
+                            Card(title: report.usesCategories ? "Categories" : "Tasks") {
+                                TaskGrid(report: report, calendar: calendar)
+                            } accessory: {
+                                Button { state.newCategory(for: nil) } label: {
+                                    Label("New Category", systemImage: "plus")
                                 }
+                                .buttonStyle(.borderless)
+                                .font(.system(size: 12))
+                                .help("Group similar tasks — similar ones get filed for you")
                             }
                         }
                     }
@@ -186,6 +194,7 @@ struct TimesheetView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .environmentObject(state)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let url = state.exportedURL {
                 exportConfirmation(url)
@@ -205,6 +214,25 @@ struct TimesheetView: View {
             Button("Cancel", role: .cancel) { state.renaming = nil }
         } message: {
             Text("Renames every logged session of “\(state.renaming ?? "")”. Use an existing name to merge tasks.")
+        }
+        .alert(categoryNameTitle, isPresented: Binding(get: { state.namingCategory != nil }, set: { if !$0 { state.namingCategory = nil } })) {
+            TextField("Category", text: $state.categoryNameText)
+            Button(categoryNameAction) { state.commitCategoryName() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { state.namingCategory = nil }
+        } message: {
+            if case .new(let task?) = state.namingCategory {
+                Text("“\(TimeLog.displayName(task))” will go in it, and similar tasks will follow.")
+            } else if case .new = state.namingCategory {
+                Text("e.g. Pipeline, Customers, Hiring. Then drag tasks onto it — similar ones get filed for you.")
+            }
+        }
+        .alert("Delete “\(state.pendingCategoryDelete?.name ?? "")”?", isPresented: Binding(get: { state.pendingCategoryDelete != nil }, set: { if !$0 { state.pendingCategoryDelete = nil } })) {
+            Button("Delete", role: .destructive) { state.confirmCategoryDelete() }
+                .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) { state.pendingCategoryDelete = nil }
+        } message: {
+            Text("Its tasks go back to Unsorted. Your logged time isn't touched.")
         }
         .alert("Delete this entry?", isPresented: Binding(get: { state.pendingDelete != nil }, set: { if !$0 { state.pendingDelete = nil } })) {
             Button("Delete", role: .destructive) { state.confirmDelete() }
@@ -253,6 +281,16 @@ struct TimesheetView: View {
         .padding(.vertical, 14)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .top) { Divider() }
+    }
+
+    private var categoryNameTitle: String {
+        if case .rename = state.namingCategory { return "Rename Category" }
+        return "New Category"
+    }
+
+    private var categoryNameAction: String {
+        if case .rename = state.namingCategory { return "Rename" }
+        return "Create"
     }
 
     private var header: some View {
@@ -357,8 +395,8 @@ private struct StatTiles: View {
             tile("Daily average", report.activeDayCount == 0 ? "–" : TimeFormatter.duration(report.total / Double(report.activeDayCount)),
                  note: report.activeDayCount == 0 ? nil : "over \(report.activeDayCount) day\(report.activeDayCount == 1 ? "" : "s")")
             tile("Sessions", "\(report.sessionCount)")
-            tile("Top task", report.rows.first?.name ?? "–",
-                 note: report.rows.first.map { TimeFormatter.duration($0.total) })
+            tile(report.usesCategories ? "Top category" : "Top task", report.top?.name ?? "–",
+                 note: report.top.map { TimeFormatter.duration($0.total) })
         }
     }
 
@@ -414,7 +452,7 @@ struct Swatch: View {
 
 // MARK: - Chart
 
-/// One stacked column per day, a segment per task.
+/// One stacked column per day, a segment per category (or per task, without categories).
 private struct DayColumnsChart: View {
     var report: TimesheetReport
     var calendar: Calendar
@@ -515,14 +553,14 @@ private struct DayColumnsChart: View {
     }
 
     private var legend: some View {
-        let colored = report.rows.filter { $0.slot != nil }
-        let hasOther = report.rows.contains { $0.slot == nil }
+        let colored = report.series.filter { $0.slot != nil }
+        let hasOther = report.series.contains { $0.slot == nil }
         return FlowRow(spacing: 14) {
-            ForEach(colored) { row in
-                LegendItem(name: row.name, slot: row.slot)
+            ForEach(colored, id: \.name) { item in
+                LegendItem(name: item.name, slot: item.slot)
             }
             if hasOther {
-                LegendItem(name: "Other", slot: nil)
+                LegendItem(name: report.otherName, slot: nil)
             }
         }
         .padding(.leading, 36)
@@ -605,63 +643,158 @@ private struct FlowRow: Layout {
 
 // MARK: - Task × day grid
 
+/// Tasks by day. With categories, each category is a row with its tasks
+/// beneath it; drag a task onto a category to file it.
 private struct TaskGrid: View {
     var report: TimesheetReport
     var calendar: Calendar
-    var onRename: (TimesheetReport.Row) -> Void
 
+    @EnvironmentObject private var state: TimesheetState
     @State private var hovered: String?
+    @State private var dropTarget: String?
+    @State private var collapsed: Set<String> = []
 
     var body: some View {
-        Grid(alignment: .trailing, horizontalSpacing: 0, verticalSpacing: 0) {
-            GridRow {
-                Text("Task").gridColumnAlignment(.leading)
-                ForEach(0..<7, id: \.self) { day in
-                    Text(report.days[day].start.formatted(.dateTime.weekday(.abbreviated)))
-                }
-                Text("Total")
-            }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(ChartPalette.mutedInk)
-            .padding(.bottom, 8)
-
-            divider
-
-            ForEach(report.rows) { row in
+        VStack(alignment: .leading, spacing: 12) {
+            Grid(alignment: .trailing, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
-                    HStack(spacing: 8) {
-                        Swatch(slot: row.slot)
-                        Text(row.name)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .foregroundStyle(ChartPalette.primaryInk)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(report.usesCategories ? "Category" : "Task").gridColumnAlignment(.leading)
                     ForEach(0..<7, id: \.self) { day in
-                        cell(row.perDay[day])
+                        Text(report.days[day].start.formatted(.dateTime.weekday(.abbreviated)))
                     }
-                    cell(row.total, emphasized: true)
+                    Text("Total")
                 }
-                .font(.system(size: 12.5))
-                .padding(.vertical, 7)
-                .background(hovered == row.id ? Color.primary.opacity(0.04) : .clear)
-                .onHover { hovered = $0 ? row.id : (hovered == row.id ? nil : hovered) }
-                .contextMenu {
-                    Button("Rename Task…") { onRename(row) }
-                }
-                divider
-            }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ChartPalette.mutedInk)
+                .padding(.bottom, 8)
 
-            GridRow {
-                Text("Total").gridColumnAlignment(.leading)
-                ForEach(0..<7, id: \.self) { day in
-                    cell(report.dayTotals[day], emphasized: true)
+                divider
+
+                if report.usesCategories {
+                    ForEach(report.groups) { group in
+                        groupRow(group)
+                        divider
+                        if !collapsed.contains(group.id) {
+                            ForEach(group.rows) { row in
+                                taskRow(row, indented: true)
+                                divider
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(report.rows) { row in
+                        taskRow(row, indented: false)
+                        divider
+                    }
                 }
-                cell(report.total, emphasized: true)
+
+                GridRow {
+                    Text("Total").gridColumnAlignment(.leading)
+                    ForEach(0..<7, id: \.self) { day in
+                        cell(report.dayTotals[day], emphasized: true)
+                    }
+                    cell(report.total, emphasized: true)
+                }
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(ChartPalette.primaryInk)
+                .padding(.top, 8)
             }
-            .font(.system(size: 12.5, weight: .semibold))
-            .foregroundStyle(ChartPalette.primaryInk)
-            .padding(.top, 8)
+            if !report.usesCategories {
+                Text("Tip: similar tasks scattered across rows? Right-click one → Category → New Category. Look-alikes get filed for you.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(ChartPalette.mutedInk)
+            }
+        }
+    }
+
+    private func groupRow(_ group: TimesheetReport.Group) -> some View {
+        let isCollapsed = collapsed.contains(group.id)
+        return GridRow {
+            HStack(spacing: 8) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(ChartPalette.mutedInk)
+                    .frame(width: 10)
+                Swatch(slot: group.slot)
+                Text(group.name)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(group.isUnsorted ? ChartPalette.secondaryInk : ChartPalette.primaryInk)
+                    .lineLimit(1)
+                if group.isUnsorted {
+                    Text("drag onto a category to file")
+                        .font(.system(size: 11))
+                        .foregroundStyle(ChartPalette.mutedInk)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isCollapsed { collapsed.remove(group.id) } else { collapsed.insert(group.id) }
+            }
+            .dropDestination(for: String.self) { tasks, _ in
+                for task in tasks { state.file(task, in: group.isUnsorted ? nil : group.id) }
+                return !tasks.isEmpty
+            } isTargeted: { targeted in
+                if targeted { dropTarget = group.id } else if dropTarget == group.id { dropTarget = nil }
+            }
+            ForEach(0..<7, id: \.self) { day in
+                cell(group.perDay[day], emphasized: true)
+            }
+            cell(group.total, emphasized: true)
+        }
+        .font(.system(size: 12.5))
+        .padding(.vertical, 7)
+        .background(dropTarget == group.id ? Color.accentColor.opacity(0.14) : (hovered == group.id ? Color.primary.opacity(0.04) : .clear))
+        .onHover { hovered = $0 ? group.id : (hovered == group.id ? nil : hovered) }
+        .contextMenu {
+            if let category = state.categories.category(group.id) {
+                Button("Rename Category…") { state.renameCategory(category) }
+                Button("Delete Category…", role: .destructive) { state.pendingCategoryDelete = category }
+            }
+        }
+    }
+
+    private func taskRow(_ row: TimesheetReport.Row, indented: Bool) -> some View {
+        GridRow {
+            HStack(spacing: 8) {
+                if indented {
+                    Color.clear.frame(width: 18, height: 1)
+                } else {
+                    Swatch(slot: row.slot)
+                }
+                Text(row.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(ChartPalette.primaryInk)
+                if row.placement?.isGuess == true {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(ChartPalette.mutedInk)
+                        .help("Filed automatically from tasks like it. Right-click → Category to change or confirm.")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .draggable(row.name) {
+                Label(row.name, systemImage: "tag")
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(ChartPalette.surface))
+            }
+            ForEach(0..<7, id: \.self) { day in
+                cell(row.perDay[day])
+            }
+            cell(row.total, emphasized: !indented)
+        }
+        .font(.system(size: 12.5))
+        .padding(.vertical, indented ? 5 : 7)
+        .background(hovered == row.id ? Color.primary.opacity(0.04) : .clear)
+        .onHover { hovered = $0 ? row.id : (hovered == row.id ? nil : hovered) }
+        .contextMenu {
+            Button("Rename Task…") { state.rename(task: row.name) }
+            CategoryMenu(task: row.name)
         }
     }
 
@@ -677,6 +810,37 @@ private struct TaskGrid: View {
             .monospacedDigit()
             .foregroundStyle(seconds > 0 ? (emphasized ? ChartPalette.primaryInk : ChartPalette.secondaryInk) : ChartPalette.mutedInk)
             .frame(minWidth: 62, alignment: .trailing)
+    }
+}
+
+/// "Category ▸" in a task's right-click menu: file it, unsort it, or start a new category.
+struct CategoryMenu: View {
+    var task: String
+
+    @EnvironmentObject private var state: TimesheetState
+
+    var body: some View {
+        let categories = state.categories
+        let placement = categories.placement(for: task)
+        Menu("Category") {
+            ForEach(categories.list) { category in
+                let isCurrent = placement?.categoryID == category.id
+                Button {
+                    state.file(task, in: category.id)
+                } label: {
+                    if isCurrent {
+                        Label(category.name + (placement?.isGuess == true ? " (guessed — click to confirm)" : ""), systemImage: "checkmark")
+                    } else {
+                        Text(category.name)
+                    }
+                }
+            }
+            if !categories.list.isEmpty {
+                Button("Unsorted") { state.file(task, in: nil) }
+                Divider()
+            }
+            Button("New Category…") { state.newCategory(for: task) }
+        }
     }
 }
 
@@ -791,7 +955,9 @@ private struct SessionRow: View {
             if !isLive {
                 Button("Edit…", action: onEdit)
                 Button("Delete", role: .destructive, action: onDelete)
+                Divider()
             }
+            CategoryMenu(task: session.task)
         }
     }
 

@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class TimesheetState: ObservableObject {
     let log: TimeLog
+    let categories: Categories
 
     @Published var weekStart = Date() {
         didSet {
@@ -30,13 +31,23 @@ final class TimesheetState: ObservableObject {
     @Published var pendingDelete: Session?
     @Published var exportedURL: URL?
     @Published var exportError: String?
+    @Published var namingCategory: CategoryNaming?
+    @Published var categoryNameText = ""
+    @Published var pendingCategoryDelete: Categories.Category?
+
+    enum CategoryNaming: Equatable {
+        /// A new category, optionally filing a task into it straight away.
+        case new(task: String?)
+        case rename(Categories.Category)
+    }
 
     var calendar: Calendar { .current }
     var onShowShortcuts: (() -> Void)?
     weak var presentingWindow: NSWindow?
 
-    init(log: TimeLog) {
+    init(log: TimeLog, categories: Categories) {
         self.log = log
+        self.categories = categories
     }
 
     // MARK: - Derived
@@ -45,7 +56,8 @@ final class TimesheetState: ObservableObject {
     var isCurrentWeek: Bool { week.contains(Date()) }
 
     func report(now: Date = Date()) -> TimesheetReport {
-        TimesheetReport(sessions: log.allSessions(now: now), week: week, calendar: calendar)
+        TimesheetReport(sessions: log.allSessions(now: now), week: week, calendar: calendar,
+                        categories: categories.list, placement: categories.placement(for:))
     }
 
     /// Today if it's in this week, otherwise the last day with anything logged.
@@ -147,8 +159,55 @@ final class TimesheetState: ObservableObject {
     }
 
     func commitRename() {
-        if let renaming { log.renameTask(renaming, to: renameText) }
+        if let renaming {
+            log.renameTask(renaming, to: renameText)
+            categories.taskRenamed(from: renaming, to: renameText)
+        }
         renaming = nil
+    }
+
+    // MARK: - Categories
+
+    /// Files a task (nil = unsorted) — the classifier learns from every one.
+    func file(_ task: String, in categoryID: String?) {
+        categories.assign(task, to: categoryID)
+    }
+
+    func newCategory(for task: String?) {
+        categoryNameText = ""
+        namingCategory = .new(task: task)
+    }
+
+    func renameCategory(_ category: Categories.Category) {
+        categoryNameText = category.name
+        namingCategory = .rename(category)
+    }
+
+    func commitCategoryName() {
+        switch namingCategory {
+        case .new(let task):
+            if let id = categories.create(named: categoryNameText), let task { file(task, in: id) }
+        case .rename(let category):
+            categories.rename(category.id, to: categoryNameText)
+        case nil:
+            break
+        }
+        namingCategory = nil
+    }
+
+    func confirmCategoryDelete() {
+        if let category = pendingCategoryDelete { categories.delete(category.id) }
+        pendingCategoryDelete = nil
+    }
+
+    /// 1–9 files the selected entry's task into that category; 0 unsorts it.
+    private func fileSelected(number: Int) {
+        guard let id = selectedSessionID, let session = log.allSessions().first(where: { $0.id == id }) else { return }
+        if number == 0 {
+            file(session.task, in: nil)
+        } else if categories.list.indices.contains(number - 1) {
+            file(session.task, in: categories.list[number - 1].id)
+        }
     }
 
     /// Viewing today: the untracked gap between the last entry and now.
@@ -195,7 +254,9 @@ final class TimesheetState: ObservableObject {
         let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             do {
-                try self.log.csv(for: sessions).write(to: url, atomically: true, encoding: .utf8)
+                try self.log.csv(for: sessions, category: { [categories = self.categories] task in
+                    categories.category(categories.placement(for: task)?.categoryID)?.name
+                }).write(to: url, atomically: true, encoding: .utf8)
                 self.exportedURL = url
             } catch {
                 self.exportError = "Could not save “\(url.lastPathComponent)”. \(error.localizedDescription)"
@@ -251,6 +312,8 @@ final class TimesheetState: ObservableObject {
             case "?": onShowShortcuts?()
             case "[": shiftWeek(-1)
             case "]": shiftWeek(1)
+            case let digit? where digit.count == 1 && digit.first!.isWholeNumber:
+                fileSelected(number: digit.first!.wholeNumberValue!)
             default: return false
             }
         }

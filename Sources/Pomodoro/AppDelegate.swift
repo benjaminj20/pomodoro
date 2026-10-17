@@ -7,6 +7,7 @@ import UserNotifications
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let prefs = Preferences()
     private let log = TimeLog()
+    private lazy var categories = Categories(directory: log.directory)
     private lazy var model = TimerModel(minutes: prefs.lastMinutes)
 
     private var statusItem: StatusItemController!
@@ -28,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel = TimerPanelController(model: model, prefs: prefs, log: log)
         floating = FloatingTimerController(model: model, prefs: prefs, log: log)
         settings = SettingsWindowController(prefs: prefs, log: log)
-        timesheet = TimesheetWindowController(log: log)
+        timesheet = TimesheetWindowController(log: log, categories: categories)
         shortcuts = ShortcutsWindowController(prefs: prefs)
         shortcuts.onCustomize = { [weak self] in self?.openSettings() }
 
@@ -182,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         // Borderless offscreen copy, tall enough to include the session log.
                         let tall = NSWindow(contentRect: NSRect(x: -4000, y: 0, width: 920, height: 1500),
                                             styleMask: .borderless, backing: .buffered, defer: false)
-                        tall.contentView = NSHostingView(rootView: TimesheetView(state: TimesheetState(log: log), log: log))
+                        tall.contentView = NSHostingView(rootView: TimesheetView(state: TimesheetState(log: log, categories: categories), log: log, categories: categories))
                         tall.orderFrontRegardless()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
                             if let window = timesheet.nsWindow {
