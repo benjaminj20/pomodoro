@@ -59,6 +59,10 @@ running. Sessions under 30 seconds are treated as accidental and skipped. A
 running count-up pauses automatically when the Mac sleeps or locks (toggle in
 Settings).
 
+CSV exports open a Save dialog in Downloads. You can choose another folder.
+After saving, the timesheet shows the filename and folder, with a **Show in
+Finder** button to reveal the CSV. If saving fails, the app shows an error.
+
 ## Code map
 
 ```

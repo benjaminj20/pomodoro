@@ -28,9 +28,12 @@ final class TimesheetState: ObservableObject {
     @Published var renaming: String?
     @Published var renameText = ""
     @Published var pendingDelete: Session?
+    @Published var exportedURL: URL?
+    @Published var exportError: String?
 
     var calendar: Calendar { .current }
     var onShowShortcuts: (() -> Void)?
+    weak var presentingWindow: NSWindow?
 
     init(log: TimeLog) {
         self.log = log
@@ -182,10 +185,32 @@ final class TimesheetState: ObservableObject {
 
     private func export(_ sessions: [Session], name: String) {
         let panel = NSSavePanel()
+        panel.title = "Export Timesheet"
+        panel.message = "Choose where to save your CSV file."
+        panel.prompt = "Export"
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "\(name).csv"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? log.csv(for: sessions).write(to: url, atomically: true, encoding: .utf8)
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+
+        let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            do {
+                try self.log.csv(for: sessions).write(to: url, atomically: true, encoding: .utf8)
+                self.exportedURL = url
+            } catch {
+                self.exportError = "Could not save “\(url.lastPathComponent)”. \(error.localizedDescription)"
+            }
+        }
+        if let presentingWindow {
+            panel.beginSheetModal(for: presentingWindow, completionHandler: complete)
+        } else {
+            complete(panel.runModal())
+        }
+    }
+
+    func revealExportInFinder() {
+        guard let exportedURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([exportedURL])
     }
 
     private static func fileDate(_ date: Date) -> String {
