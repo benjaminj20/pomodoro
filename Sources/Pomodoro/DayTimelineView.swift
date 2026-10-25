@@ -93,6 +93,8 @@ struct DayTimeline: View {
                         .foregroundStyle(ChartPalette.mutedInk)
                 }
                 .frame(height: laneHeight)
+                .contentShape(Rectangle())
+                .contextMenu { CategoryMenu(task: lane.name) }
             }
         }
         .frame(width: labelWidth)

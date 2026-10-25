@@ -224,15 +224,16 @@ final class TimeLog: ObservableObject, SessionRecorder {
 
     // MARK: - Export
 
-    func csv(for sessions: [Session]) -> String {
+    func csv(for sessions: [Session], category: (String) -> String? = { _ in nil }) -> String {
         let date = Self.formatter("yyyy-MM-dd")
         let time = Self.formatter("HH:mm")
-        var lines = ["Date,Start,End,Task,Minutes,Mode,Completed"]
+        let quote = { (text: String) in "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        var lines = ["Date,Start,End,Task,Category,Minutes,Mode,Completed"]
         for s in sessions {
-            let task = "\"" + s.displayTask.replacingOccurrences(of: "\"", with: "\"\"") + "\""
             let minutes = String(format: "%.1f", s.duration / 60)
             lines.append([date.string(from: s.start), time.string(from: s.start), time.string(from: s.end),
-                          task, minutes, s.mode == .countUp ? "count up" : "countdown", s.completed ? "yes" : "no"]
+                          quote(s.displayTask), quote(category(s.task) ?? ""), minutes,
+                          s.mode == .countUp ? "count up" : "countdown", s.completed ? "yes" : "no"]
                 .joined(separator: ","))
         }
         return lines.joined(separator: "\n") + "\n"
@@ -253,9 +254,10 @@ final class TimeLog: ObservableObject, SessionRecorder {
         return cleaned.isEmpty ? untitled : cleaned
     }
 
-    /// Grouping key: "Email", "email " and "EMAIL" are the same task.
+    /// Grouping key: "Email", "email " and "EMAIL" are the same task, and so
+    /// are "odd tasks" and "odd  tasks".
     nonisolated static func key(_ task: String) -> String {
-        displayName(task).lowercased()
+        displayName(task).lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     // MARK: - Persistence

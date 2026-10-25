@@ -182,6 +182,8 @@ struct ShortcutsView: View {
                 Item(keys: ["⌫"], action: "Delete entry"),
                 Item(keys: ["N"], action: "Add entry for the gap"),
                 Item(keys: ["R"], action: "Rename task everywhere"),
+                Item(keys: ["1–9"], action: "File entry's task in a category"),
+                Item(keys: ["0"], action: "Move it to Unsorted"),
                 Item(keys: ["W"], action: "Log: day / whole week"),
                 Item(keys: ["⌘", "E"], action: "Export week as CSV"),
                 Item(keys: ["esc"], action: "Close"),
